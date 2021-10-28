@@ -1,12 +1,7 @@
-import { dosemu } from "../common/node_modules/dosemu/index.js";
-import { Bomb } from "../common/bomb.js";
-import { Enemy } from "../common/enemy.js";
+import { dosemu, dosemuSprite } from "../common/node_modules/dosemu/index.js";
 import { Entity } from "../common/entity.js";
-import { Fire } from "../common/fire.js";
 import { GridEntity } from "../common/grid-entity.js";
-import { Player } from "../common/player.js";
 import { bombSprites } from "./bomb-sprites.js";
-import { CharacterSpriteSet } from "./character-sprite-set.js";
 import { Character } from "../common/character.js";
 import { enemySprites } from "./enemy-sprites.js";
 import { fireSprites } from "./fire-sprites.js";
@@ -16,9 +11,10 @@ import { clientState } from "./client-state.js";
 import { buildThemes } from "./themes.js";
 import { clamp } from "../common/math.js";
 import { CharacterExplodeAnimation } from "./character-explode-animation.js";
+import { powerupSprites } from "./powerup-sprites.js";
 import * as world from "../common/world.js";
 import * as constants from "../common/constants.js";
-import { powerupSprites } from "./powerup-sprites.js";
+import * as raycast from "./raycast.js";
 
 // --------------------------------------------------------------------------------------------------
 
@@ -26,6 +22,11 @@ const themes = buildThemes();
 let selectedTheme = 0;
 
 // --------------------------------------------------------------------------------------------------
+
+/** @returns {Theme} the currently selected theme */
+export function getTheme() {
+	return themes[selectedTheme];
+}
 
 export function draw() {
 	[clientState.scrollX, clientState.scrollY] = getScrollOffsets();
@@ -38,6 +39,27 @@ export function draw() {
 	if (clientState.playerHasDied) {
 		drawLoserBox();
 	}
+}
+
+/**
+ * @param {number[][]} map
+ * @param {number} row
+ * @param {number} col
+ * @param {number} mapDX
+ * @param {number} mapDY
+ */
+ export function drawTile(map, row, col, mapDX, mapDY) {
+	const tileX = col * constants.TILE_SIZE + mapDX;
+	const tileY = row * constants.TILE_SIZE + mapDY;
+	let sprite = null;
+	if ([1, 2].includes(map[row][col])) {
+		// brick type
+		sprite = themes[selectedTheme].brickSprites[map[row][col] - 1];
+	} else {
+		// if the map is 0 or a non-brick value (enemy or player), we draw a field sprite at that location
+		sprite = themes[selectedTheme].fieldSprite;
+	}
+	dosemu.drawSprite(tileX, tileY, sprite);
 }
 
 // --------------------------------------------------------------------------------------------------
@@ -86,36 +108,65 @@ function draw2D() {
 }
 
 /**
- * @param {number[][]} map
- * @param {number} row
- * @param {number} col
- * @param {number} mapDX
- * @param {number} mapDY
- */
-function drawTile(map, row, col, mapDX, mapDY) {
-	const tileX = col * constants.TILE_SIZE + mapDX;
-	const tileY = row * constants.TILE_SIZE + mapDY;
-	let sprite = null;
-	if ([1, 2].includes(map[row][col])) {
-		// brick type
-		sprite = themes[selectedTheme].brickSprites[map[row][col] - 1];
-	} else {
-		// if the map is 0 or a non-brick value (enemy or player), we draw a field sprite at that location
-		sprite = themes[selectedTheme].fieldSprite;
-	}
-	dosemu.drawSprite(tileX, tileY, sprite);
+ * @param {string} text
+ * @param {"left" | "center" | "right"} alignment
+ **/
+function drawShadowedText(x, y, text, color, shadowColor, alignment) {
+	dosemu.drawText(x + 1, y + 1, text, shadowColor, alignment);
+	dosemu.drawText(x, y, text, color, alignment);
 }
 
 function drawLoserBox() {
-	dosemu.drawBar(70, 85, 245, 115, 0);
-	dosemu.drawRectangle(70, 85, 245, 115, 9);
-	dosemu.drawRectangle(68, 83, 247, 117, 0);
-	dosemu.drawText(160, 100, "You're dead! Loser!", 9, "center");
+	const texts = [{
+		text: "You're dead! Loser!",
+		color: 9
+	}, {
+		text: "Press ENTER to respawn",
+		color: 11
+	}];
+	const padding = 15;
+	const lineHeight = 10;
+	const lineGap = 5;
+	const charWidth = 8;
+	const maxLength = Math.max(...texts.map(t => t.text.length));
+	const boxWidth = maxLength * charWidth + padding * 2 + 2;
+	const boxHalfWidth = boxWidth >> 1;
+	const boxHeight = texts.length * lineHeight + (texts.length-1) * lineGap + padding * 2 + 2;
+	const boxHalfHeight = boxHeight >> 1;
+	const x1 = 160 - boxHalfWidth;
+	const y1 = 100 - boxHalfHeight;
+	const x2 = 160 + boxHalfWidth;
+	const y2 = 100 + boxHalfHeight;
+	dosemu.drawBar(x1, y1, x2, y2, 0);
+	dosemu.drawRectangle(x1, y1, x2, y2, 9);
+	dosemu.drawRectangle(x1 - 2, y1 - 2, x2 + 2, y2 + 2, 0);
+	let textY = y1 + lineHeight / 2 + padding + 2;
+	for (let i=0; i<texts.length; i++) {
+		drawShadowedText(160, textY, texts[i].text, texts[i].color, 235, "center");
+		textY += lineHeight + lineGap;
+	}
 }
 
 
 function draw3D() {
-	raycast.render(world.getMap(), clientState.player, world.getEntities(), themes[selectedTheme]);
+	raycast.render(
+		world.getMap(),
+		clientState.player,
+		world.getEntities(),
+		themes[selectedTheme],
+		get3DSprite
+	);
+}
+
+/**
+ * @param {Entity} entity
+ * @param {string} animationName
+ * @returns {dosemuSprite.Sprite}
+ **/
+function get3DSprite(entity, animationName) {
+	const spriteSeq = getSpriteSequenceForAnimation(entity, animationName);
+	const currentFrame = entity.animationController.getCurrentFrame(spriteSeq.frames.length);
+	return spriteSeq.frames[currentFrame];
 }
 
 /** @returns {[ofsX: number, ofsY: number]} */
@@ -150,58 +201,32 @@ function getScrollOffsets() {
 
 /** @param {Entity} entity */
 function drawEntity(entity, offsX, offsY) {
-	if (entity.getType().startsWith("player")) {
-		const skinId = Number.parseInt(entity.getType().substr("player-".length));
-		return drawPlayer(entity, skinId, offsX, offsY);
-	}
-	if (entity.getType().startsWith("enemy")) {
-		const skinId = Number.parseInt(entity.getType().substr("enemy-".length));
-		return drawEnemy(entity, skinId, offsX, offsY);
+	if (entity.getType().startsWith("player") || entity.getType().startsWith("enemy")) {
+		return drawCharacter(entity, offsX, offsY);
 	}
 	switch (entity.getType()) {
 		case "bomb":
-			return drawBomb(entity, offsX, offsY);
+			return drawGridEntity(entity, "", offsX, offsY);
 		case "fire":
-			return drawFire(entity, offsX, offsY);
+			return drawGridEntity(entity, entity.type, offsX, offsY);
 		case "character-explode-animation":
 			return drawCharacterExplodeAnimation(entity, offsX, offsY);
 		case "powerup-bomb":
-			return drawGridEntity(entity, powerupSprites.bomb, offsX, offsY);
+			return drawGridEntity(entity, "", offsX, offsY);
 		case "powerup-radius":
-			return drawGridEntity(entity, powerupSprites.radius, offsX, offsY);
+			return drawGridEntity(entity, "", offsX, offsY);
 		case "powerup-speed":
-			return drawGridEntity(entity, powerupSprites.speed, offsX, offsY);
+			return drawGridEntity(entity, "", offsX, offsY);
 		default:
 			throw `entity type not handled in draw: ${entity.getType()}`;
 	}
 }
 
-/** @param {Player} player */
-function drawPlayer(player, skinId, offsX, offsY) {
-	drawCharacter(player, playerSprites[skinId], offsX, offsY); // TODO use skin by spawn slot id
-}
-
-/** @param {Enemy} enemy */
-function drawEnemy(enemy, skinId, offsX, offsY) {
-	drawCharacter(enemy, enemySprites[skinId], offsX, offsY);
-}
-
-/** @param {Bomb} bomb */
-function drawBomb(bomb, offsX, offsY) {
-	drawGridEntity(bomb, bombSprites, offsX, offsY);
-}
-
-/** @param {Fire} fire */
-function drawFire(fire, offsX, offsY) {
-	drawGridEntity(fire, fireSprites[fire.type], offsX, offsY);
-}
-
 /**
  * @param {Character} character
- * @param {CharacterSpriteSet} spriteSet
  **/
-function drawCharacter(character, spriteSet, offsX, offsY) {
-	const spriteSeq = spriteSet[character.orientation];
+function drawCharacter(character, offsX, offsY) {
+	const spriteSeq = getSpriteSequenceForAnimation(character, character.orientation);
 	if (character.isStopped) {
 		// reset to the first frame, but right before switching to the second,
 		// so when the character starts moving, the animation starts right away.
@@ -221,9 +246,10 @@ function drawCharacter(character, spriteSet, offsX, offsY) {
 
 /**
  * @param {GridEntity} entity
- * @param {SpriteSequence} spriteSequence
+ * @param {string} animationName
  * */
-function drawGridEntity(entity, spriteSequence, offsX, offsY) {
+function drawGridEntity(entity, animationName, offsX, offsY) {
+	const spriteSequence = getSpriteSequenceForAnimation(entity, animationName);
 	const currentFrame = entity.animationController.getCurrentFrame(spriteSequence.frames.length);
 	dosemu.drawSprite(
 		offsX + (entity.column + 0.5) * constants.TILE_SIZE,
@@ -254,12 +280,10 @@ function drawCharacterExplodeAnimation(entity, offsX, offsY) {
  */
 function getSpriteSequenceForAnimation(entity, animationName) {
 	if (entity.getType().startsWith("player")) {
-		const skinId = Number.parseInt(entity.getType().substr("player-".length));
-		return playerSprites[skinId][animationName];
+		return playerSprites[entity.skinNumber][animationName];
 	}
 	if (entity.getType().startsWith("enemy")) {
-		const skinId = Number.parseInt(entity.getType().substr("enemy-".length));
-		return enemySprites[skinId][animationName];
+		return enemySprites[entity.type][animationName];
 	}
 	switch(entity.getType()) {
 		case "bomb":
@@ -294,7 +318,7 @@ function getSpriteSequenceForCharacterExplodeAnimation(entity) {
 
 /**
  * @param {Entity} entity
- * @param {String} animationName
+ * @param {string} animationName
  **/
 function configureAnimationController(entity, animationName) {
 	entity.animationController.setDurationFromSpriteSeq(

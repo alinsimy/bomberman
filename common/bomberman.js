@@ -10,17 +10,18 @@ import { PowerupSpeed } from "./powerup-speed.js";
 // --------------------------------------------------------------------------------------------------
 
 /** @type {number[][]} */
-let mapTemplate = []; // the map template
+export let mapTemplate = []; // the map template
 /** @type {number[][]} */
 let map = []; // the map instance
 /** @type {{row: number, col: number}[]} */
 let playerSpawnPositions = [];
+let headlessMode = true;
 
 // --------------------------------------------------------------------------------------------------
 
 export function reset() {
 	world.clearData();
-	if (!world.headlessMode()) {
+	if (!headlessMode) {
 		world.getClient().reset();
 	}
 }
@@ -32,7 +33,7 @@ export function init(client) {
 	Entity.onEntityCreated.subscribe(handleEntityCreated);
 	Entity.onEntityDestroyed.subscribe(handleEntityDestroyed);
 	world.setOnBrickDestroyedCallback(handleBrickDestroyed);
-	world.setHeadlessMode(!client);
+	headlessMode = !client;
 
 	if (client) {
 		world.setClient(client);
@@ -44,7 +45,7 @@ export function init(client) {
 
 /**
  * @param {number[][]} mapTemplate,
- * @param {number} playerSpawnSlot
+ * @param {number | null} playerSpawnSlot
  */
 export function startGame(mapTemplate, playerSpawnSlot) {
 	selectMap(mapTemplate);
@@ -53,13 +54,13 @@ export function startGame(mapTemplate, playerSpawnSlot) {
 
 export function update(dt) {
 	world.update(dt);
-	if (!world.headlessMode()) {
+	if (!headlessMode) {
 		world.getClient().update(dt);
 	}
 }
 
 export function draw() {
-	if (!world.headlessMode()) {
+	if (!headlessMode) {
 		world.getClient().draw();
 	}
 }
@@ -77,7 +78,7 @@ export function getPlayerSpawnPosition(slotId) {
 
 // --------------------------------------------------------------------------------------------------
 
-/** @param {number} playerSpawnSlot */
+/** @param {number | null} playerSpawnSlot */
 function spawnEntities(playerSpawnSlot) {
 	playerSpawnPositions = [];
 	let crtPlayerSlot = 0;
@@ -90,36 +91,39 @@ function spawnEntities(playerSpawnSlot) {
 			switch (map[i][j]) {
 				case 9: // player
 					playerSpawnPositions.push({ row: i, col: j });
-					if (playerSpawnSlot == crtPlayerSlot) {
+					if (!headlessMode && playerSpawnSlot == crtPlayerSlot) {
 						const playerX = j * constants.TILE_SIZE + constants.PLAYER_INITIAL_X_OFFS;
 						const playerY = i * constants.TILE_SIZE + constants.PLAYER_INITIAL_Y_OFFS;
-						const player = new Player({
-							x: playerX,
-							y: playerY,
-							skinNumber: playerSpawnSlot
-						});
-						if (!world.headlessMode()) {
-							world.getClient().setPlayer(player);
-						}
+						world.handlePlayerSpawned(
+							new Player({
+								x: playerX,
+								y: playerY,
+								skinNumber: playerSpawnSlot
+							})
+						);
 					}
 					crtPlayerSlot++;
 					break;
 				default: // enemy
-					const enemyX = j * constants.TILE_SIZE + constants.ENEMY_INITIAL_X_OFFS;
-					const enemyY = i * constants.TILE_SIZE + constants.ENEMY_INITIAL_Y_OFFS;
-					let enemyType = map[i][j] - 3;
-					enemyType = 0; // TODO remove hardcoding after adding all the sprites
-					new Enemy({
-						x: enemyX,
-						y: enemyY,
-						type: enemyType
-					});
-					break;
+					if (headlessMode) { // we equate headless mode with being a server -> perhaps this should change in the future.
+						const enemyX = j * constants.TILE_SIZE + constants.ENEMY_INITIAL_X_OFFS;
+						const enemyY = i * constants.TILE_SIZE + constants.ENEMY_INITIAL_Y_OFFS;
+						let enemyType = map[i][j] - 3;
+						enemyType = 0; // TODO remove hardcoding after adding all the sprites
+						world.handleEnemySpawned(
+							new Enemy({
+								x: enemyX,
+								y: enemyY,
+								type: enemyType
+							})
+						);
+						break;
+					}
 			}
 			map[i][j] = 0; // leave an empty space below entity
 		}
 	}
-	if (!world.headlessMode() && !world.getClient().getPlayer()) {
+	if (!headlessMode && !world.getClient().getPlayer()) {
 		console.error(`Player spawn position #${playerSpawnSlot} not found in map!`);
 	}
 }
@@ -129,7 +133,7 @@ function selectMap(template) {
 	mapTemplate = template;
 	// make a deep copy, so we don't ever alter the map template while playing
 	map = mapTemplate.map(
-		row => row.map(x => x)
+		row => [...row]
 	);
 
 	world.setMap(map);
@@ -138,7 +142,7 @@ function selectMap(template) {
 /** @param {Entity} entity */
 function handleEntityCreated(entity) {
 	world.addEntity(entity);
-	if (!world.headlessMode()) {
+	if (!headlessMode) {
 		world.getEntities().sort((a, b) => a.layer - b.layer);
 	}
 }

@@ -1,10 +1,8 @@
-import { dosemu } from "./node_modules/dosemu/index.js";
 import { Character } from "./character.js";
 import * as world from "./world.js";
 import * as constants from "./constants.js";
-import { Bomb } from "./bomb.js";
 import { CollisionResult } from "./collision.js";
-import { InputSource } from "./input-source.js";
+import { Entity } from "./entity.js";
 
 export class Player extends Character {
 
@@ -12,9 +10,8 @@ export class Player extends Character {
 	maxBombCount = 1;
 	bombCount = 0;
 	skinNumber = 0;
-	/** @type {InputSource} */
-	inputSource;
-	wasSpacePressed = false;
+
+	inputController = null;
 
 	/** @param {Character & {skinNumber: number}} data */
 	constructor(data) {
@@ -22,12 +19,13 @@ export class Player extends Character {
 			...data,
 			baseSpeed: constants.PLAYER_INITIAL_SPEED
 		});
+		this.speed = this.baseSpeed;
 		this.skinNumber = data.skinNumber || 0;
 	}
 
-	/** @type {InputSource} source */
-	setInputSource(source) {
-		this.inputSource = source;
+	/** @type {InputController} controller */
+	setInputController(controller) {
+		this.inputController = controller;
 	}
 
 	/** @override @returns {string} the type of entity */
@@ -35,39 +33,45 @@ export class Player extends Character {
 
 	update(dt) {
 		super.update(dt);
-		if (this.inputSource.isKeyPressed("ArrowDown")) {
-			this.move("down");
-		} else if (this.inputSource.isKeyPressed("ArrowUp")) {
-			this.move("up");
-		} else if (this.inputSource.isKeyPressed("ArrowLeft")) {
-			this.move("left");
-		} else if (this.inputSource.isKeyPressed("ArrowRight")) {
-			this.move("right");
-		}
-		if (this.inputSource.isKeyPressed(" ") && !this.wasSpacePressed) {
-			this.spawnBomb();
-			this.wasSpacePressed = true;
-		}
-		if (!this.inputSource.isKeyPressed(" ")) {
-			this.wasSpacePressed = false;
-		}
+		this.inputController.update(this);
 	}
 
-	spawnBomb() {
+	/** @returns {Player} the new player instance */
+	respawn(x, y) {
+		// create a new player entity that is a copy of this one
+		const player = new Player({
+			x, y,
+			skinNumber: this.skinNumber,
+		});
+		// if we've respawned on top of a bomb, add it to array so we can walk away from it.
+		if (world.isBombAt(this.getRow(), this.getColumn())) {
+			this.overlapingBombs.push(
+				...world.getEntitiesInCell(this.getRow(), this.getColumn())
+					.filter(e => e.getType() == "bomb")
+			);
+		}
+		return player;
+	}
+
+	canSpawnBomb() {
 		if (this.bombCount >= this.maxBombCount) {
-			return;
+			return false;
 		}
 		const spawnRow = this.getRow();
 		const spawnColumn = this.getColumn();
-		if (!world.isBombAt(spawnRow, spawnColumn)) {
-			this.bombCount++;
-			(new Bomb(this.bombPower, spawnRow, spawnColumn))
-				.onDestroy = () => this.bombCount--;
+		if (world.isBombAt(spawnRow, spawnColumn)) {
+			return false;
 		}
+		return true;
 	}
 
 	/** @param {Entity} entity */
 	reactToCollisionWithEntity(entity) {
+		if (entity.getType().startsWith("enemy")) {
+			// the enemy ate us
+			this.die();
+			return;
+		}
 		switch (entity.getType()) {
 			case "powerup-bomb":
 				this.maxBombCount++;
